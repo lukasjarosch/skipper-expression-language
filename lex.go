@@ -71,6 +71,7 @@ type lexer struct {
 	pos             int
 	width           int
 	tokens          chan Token
+	token           Token
 	insideParamList bool
 	parenDepth      int // nesting depth of '( )' expressions
 	exprDepth       int // nesting depth of delimited expressions (e.g. ${foo:${bar}})
@@ -79,7 +80,7 @@ type lexer struct {
 func lex(input string) *lexer {
 	l := &lexer{
 		input:           input,
-		tokens:          make(chan Token),
+		tokens:          make(chan Token, 3),
 		insideParamList: false,
 	}
 	go l.run()
@@ -92,6 +93,21 @@ func (l *lexer) run() {
 		state = state(l)
 	}
 	close(l.tokens)
+}
+
+// nextToken returns the next Token from the input.
+// Called by the parser, not the lexer!
+func (l *lexer) nextToken() Token {
+	for {
+		select {
+		case token, ok := <-l.tokens:
+			if !ok {
+				return Token{Type: tEOF, Value: "EOF"}
+			}
+			return token
+		default:
+		}
+	}
 }
 
 func (l *lexer) emit(t TokenType) {
@@ -317,7 +333,7 @@ func lexIdentifier(l *lexer) stateFn {
 	return lexExpression
 }
 
-func lexQuotedString(quote rune) func(l *lexer) stateFn {
+func lexQuotedString(quote rune) stateFn {
 	return func(l *lexer) stateFn {
 	Loop:
 		for {
