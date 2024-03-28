@@ -20,6 +20,7 @@ const (
 	tRightParen
 	tPathSep    // :
 	tDoublePipe // ||
+	tDollar
 	tComma
 
 	tString
@@ -48,6 +49,8 @@ func TokenString(t TokenType) string {
 		return "RIGHT_PARENTHESES"
 	case tDoublePipe:
 		return "DOUBLE_PIPE"
+	case tDollar:
+		return "DOLLAR"
 	case tComma:
 		return "COMMA"
 	default:
@@ -259,16 +262,17 @@ func lexExpression(l *lexer) stateFn {
 	case r == ':':
 		l.emit(tPathSep)
 		return lexExpression
-	// nested expression?
 	case r == '$':
+		// nested expression?
 		if l.peek() == '{' {
 			l.next()
 			l.emit(tLeftDelim)
 			l.exprDepth++
 			return lexExpression
 		}
-		// no, just a random '$', this is not valid
-		return l.errorf("unexpected token %#U at pos %d", r, l.pos)
+		// dollars indicate a variable
+		l.emit(tDollar)
+		return lexExpression
 
 	// start param list
 	case r == '(':
@@ -297,9 +301,6 @@ func lexExpression(l *lexer) stateFn {
 
 	// commas within parameter lists
 	case r == ',':
-		if !l.insideParamList {
-			return l.errorf("unexpected token %#U outside of parameter list", r)
-		}
 		l.emit(tComma)
 		return lexExpression
 
@@ -315,7 +316,7 @@ func lexExpression(l *lexer) stateFn {
 			l.emit(tDoublePipe)
 			return lexExpression
 		}
-		return l.errorf("unexpected token %#U at pos %d", r, l.pos)
+		return l.errorf("invalid token %#U", r)
 
 	// input cannot end before the rightDelim is found
 	case r == eof:
@@ -323,7 +324,7 @@ func lexExpression(l *lexer) stateFn {
 
 		// fail on any other rune
 	default:
-		return l.errorf("unrecognized character in expression: %#U", r)
+		return l.errorf("unrecognized rune in expression: %#U", r)
 	}
 }
 

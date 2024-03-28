@@ -1,45 +1,23 @@
-grammar = value_expression | path_expression ;
+grammar = "${", ( expression | standalone_variable ) , "}";
+expression = inline_variable | path | call;
 
-(*
-The SEL has two core expression types: value and path.
-Both expressions produce a value, only the semantics changes.
-*)
+inline_variable = "$", identifier;
+standalone_variable = identifier;
+path = identifier, path_tail;
+path_tail = {":", (identifier | inline_variable) }-;
+call = identifier, "(", param_list, ")", alt_expression;
+param_list = {(quoted_string | inline_variable | path | call)}, {param_list_tail};
+param_list_tail = {",", (quoted_string | inline_variable | path | call)};
+alt_expression = {"||", expression};
 
-value_expression = "${" , ( identifier | call ) , "}" ;
-path_expression = "${" , path , "}" ;
+quoted_string = quote, character, quote;
 
-(*
-Paths are identifiers or any other value created by a value_expression,
-which are separated by a colon ':'.
-Paths without a colon are not valid.
-*)
-path = ( identifier | value_expression ) ,
-  { ":" , ( identifier | value_expression ) }- ;
+identifier = letter, identifier_tail;
+identifier_tail = {digit | ident_symbol | letter};
 
-call = identifier , "(" , parameterList , ")" ;
+quote = '"' | "'";
 
-parameterList =
-  [ identifier
-  | terminal
-  | value_expression
-  | path_expression
-  | path
-  ] , { "," ,
-  ( identifier
-  | terminal
-  | value_expression
-  | path_expression
-  | path
-  ) } ;
-
-identifier = letter , { letter | digit | "_" } ;
-
-terminal
-  = "'" , character , { character } , "'"
-  | '"' , character , { character } , '"'
-  ;
-
-character = letter | digit | symbol | "_" ;
+character = letter | digit | "!@#$%^&*()-_=+{};:,.<>/?|`~";
 
 letter
   = "A" | "B" | "C" | "D" | "E" | "F" | "G"
@@ -57,8 +35,4 @@ digit
   | "7" | "8" | "9"
   ;
 
-symbol
-  = "[" | "]" | "{" | "}" | "(" | ")" | "<"
-  | ">" | "'" | '"' | "=" | "|" | "." | ","
-  | ";"
-  ;
+ident_symbol  = "-" | "_"  ;
