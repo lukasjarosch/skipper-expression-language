@@ -51,6 +51,7 @@ func (t *Tree) errorf(format string, args ...any) {
 	panic(fmt.Errorf(format, args...))
 }
 
+// errorfWithContext calls 'errorf' but adds failure context for the user based on the token.
 func (t *Tree) errorfWithContext(tok Token, format string, args ...interface{}) {
 	line := func(pos int) (string, int) {
 		// in case the input is multiline, extract just the line we're in
@@ -75,6 +76,7 @@ func (t *Tree) errorfWithContext(tok Token, format string, args ...interface{}) 
 	t.errorf(format, args...)
 }
 
+// peek returns the next token without consuming it
 func (t *Tree) peek() Token {
 	if t.peekCount > 0 {
 		return t.token[t.peekCount-1]
@@ -106,6 +108,9 @@ func (t *Tree) next() Token {
 	return t.token[t.peekCount]
 }
 
+// parse starts parsing the input
+//
+// grammar ::= '${' expression '}'
 func (t *Tree) parse() {
 	t.root = t.newList(Pos(t.peek().Pos))
 	for t.peek().Type != tEOF {
@@ -131,9 +136,9 @@ func (t *Tree) parse() {
 
 // parseExpression
 //
-// variable | path | call
+// expression ::= standalone_variable | inline_variable | path | call
 //
-// The left delimiter is already consumed at this point.
+// NOTE: The left delimiter is already consumed at this point.
 func (t *Tree) parseExpression() (expr *ExpressionNode) {
 	t.inExpression = true
 
@@ -155,7 +160,7 @@ func (t *Tree) parseExpression() (expr *ExpressionNode) {
 			t.backup2(ident) // restore identifier
 			return t.newExpression(Pos(tok.Pos), t.parsePath())
 
-		// standalone variable expression
+		// only an identifier, then a right-delimiter -> standalone_variable
 		case tRightDelim:
 			t.backup2(ident)
 			return t.newExpression(Pos(ident.Pos), t.parseStandaloneVariable())
@@ -200,22 +205,25 @@ func (t *Tree) parseStandaloneVariable() *VariableNode {
 	return t.newVariable(Pos(tok.Pos), tok.Value)
 }
 
+// parseCall
+//
+// call 					::= identifier "(" argument_list ")" alternative_expression
+// alternative_expression 	::= "||" expression
 func (t *Tree) parseCall() Node {
 	ident := t.parseIdentifier()
 	call := t.newCall(ident.Pos, ident)
 
-	// opening parentheses
 	t.expect(tLeftParen, "parseCall")
 
-	// arguments
-	for _, arg := range t.parseCallArguments() {
+	// argument list surrounded by parentheses
+	for _, arg := range t.parseCallArgumentList() {
 		call.appendArgument(arg)
 	}
 
 	// closing parentheses
 	t.expect(tRightParen, "parseCall")
 
-	// alternative call
+	// alternative exepression
 	if t.peek().Type == tDoublePipe {
 		t.expect(tDoublePipe, "parseCall")
 		call.AlternativeExpr = t.parseExpression()
@@ -224,7 +232,11 @@ func (t *Tree) parseCall() Node {
 	return call
 }
 
-func (t *Tree) parseCallArguments() (args []Node) {
+// parseCallArgumentList
+//
+// argument_list 		::= {(quoted_string | inline_variable | path | call)} {argument_list_tail}
+// argument_list_tail 	::= {"," (quoted_string | inline_variable | path | call)}
+func (t *Tree) parseCallArgumentList() (args []Node) {
 	for t.peek().Type != tRightParen {
 		tok := t.peek()
 
@@ -240,12 +252,16 @@ func (t *Tree) parseCallArguments() (args []Node) {
 			ident := t.next()
 
 			switch tok := t.peek(); tok.Type {
+			// path is argument
 			case tPathSep:
 				t.backup2(ident)
 				args = append(args, t.parsePath())
+
+			// call is argument
 			case tLeftParen:
 				t.backup2(ident)
 				args = append(args, t.parseCall())
+
 			default:
 				t.errorfWithContext(tok, "expected path separator or left parentheses after identifier, got %s", TokenString(tok.Type))
 			}
@@ -260,24 +276,14 @@ func (t *Tree) parseCallArguments() (args []Node) {
 		}
 
 		// if there are more args, there must be a comma
-		// otherwise catch some common syntax errors
+		// anything other is a syntax error
 		if tok.Type != tRightParen {
 			switch tok.Type {
 			case tComma:
 				t.next() // consume comma, and continue parsing args
 				continue
-			case tPathSep:
-				t.errorfWithContext(t.peek(), "unexpected path-separator in argument list")
-			case tDoublePipe:
-				t.errorfWithContext(t.peek(), "unexpected %s in argument list", TokenString(tDoublePipe))
-				// default:
-				// 	return
-				// case tRightDelim:
-				// 	t.errorfWithContext(t.peek(), "unexpected %s in argument list, expected right parentheses", TokenString(tRightDelim))
-				// default:
-				// 	spew.Dump(t.peek())
-				// 	spew.Dump(t.next())
-				// 	t.errorfWithContext(t.peek(), "expected comma")
+			default:
+				t.errorfWithContext(t.peek(), "unexpected %s in argument list", TokenString(t.peek().Type))
 			}
 		}
 	}
@@ -285,6 +291,7 @@ func (t *Tree) parseCallArguments() (args []Node) {
 	return
 }
 
+// parseIdentifier expects the next token to be tIdent.
 func (t *Tree) parseIdentifier() *IdentifierNode {
 	tok := t.next()
 	if tok.Type != tIdent {
@@ -294,6 +301,7 @@ func (t *Tree) parseIdentifier() *IdentifierNode {
 	return t.newIdentifier(Pos(tok.Pos), tok.Value)
 }
 
+// parseString expects the next token to be tString
 func (t *Tree) parseString() *StringNode {
 	tok := t.next()
 	if tok.Type != tString {
@@ -302,6 +310,13 @@ func (t *Tree) parseString() *StringNode {
 	return t.newString(Pos(tok.Pos), tok.Value)
 }
 
+// parsePath
+//
+// path 		::= identifier, path_tail
+// path_tail 	::= {":" (identifier | inline_variable)}+
+//
+// Thus, a path MUST start with an identifier and must have at lest
+// one path_tail segment.
 func (t *Tree) parsePath() Node {
 	// a path can have only 256 path segments
 	const maxLength = 256

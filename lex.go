@@ -69,22 +69,20 @@ type Token struct {
 type stateFn func(*lexer) stateFn
 
 type lexer struct {
-	input           string
-	start           int
-	pos             int
-	width           int
-	tokens          chan Token
-	token           Token
-	insideParamList bool
-	parenDepth      int // nesting depth of '( )' expressions
-	exprDepth       int // nesting depth of delimited expressions (e.g. ${foo:${bar}})
+	input      string
+	start      int
+	pos        int
+	width      int
+	tokens     chan Token
+	token      Token
+	parenDepth int // nesting depth of '( )' expressions
+	exprDepth  int // nesting depth of delimited expressions (e.g. ${foo:${bar}})
 }
 
 func lex(input string) *lexer {
 	l := &lexer{
-		input:           input,
-		tokens:          make(chan Token, 3),
-		insideParamList: false,
+		input:  input,
+		tokens: make(chan Token, 3),
 	}
 	go l.run()
 	return l
@@ -277,17 +275,12 @@ func lexExpression(l *lexer) stateFn {
 	// start param list
 	case r == '(':
 		l.parenDepth++
-		l.insideParamList = true
 		l.emit(tLeftParen)
 		return lexExpression
 
 	// end param list
 	case r == ')':
 		l.parenDepth--
-		if l.parenDepth < 0 {
-			return l.errorf("unexpected right parentheses")
-		}
-		l.insideParamList = false
 		l.emit(tRightParen)
 		return lexExpression
 
